@@ -9,3 +9,6 @@ keywords = ["async", "traits"]
 categories = ["no-std"]
 license = "MIT/Apache-2.0"
 readme = "README.md"
+
+[dev-dependencies]
+compio = { version = "0.19.*", features = ["fs", "macros", "time"] }

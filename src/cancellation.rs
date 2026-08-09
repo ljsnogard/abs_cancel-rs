@@ -23,9 +23,10 @@ where
         Self: 'f;
 }
 
-
 /// A cancellation token can receive cancellation signal.
 pub trait TrCancellationToken {
+    type Cancellation: Future;
+
     /// Tests whether this token has received cancellation signal or not.
     fn is_cancelled(&self) -> bool;
 
@@ -36,7 +37,7 @@ pub trait TrCancellationToken {
 
     /// Creates a future that will become ready when the cancellation signal is
     /// received by this token.
-    fn cancellation(&mut self) -> impl IntoFuture;
+    fn cancellation(&mut self) -> Self::Cancellation;
 }
 
 /// A token that is already cancelled and will never reset.
@@ -75,6 +76,8 @@ impl CancelledToken {
 }
 
 impl TrCancellationToken for CancelledToken {
+    type Cancellation = future::Ready<()>;
+
     #[inline]
     fn is_cancelled(&self) -> bool {
         CancelledToken::is_cancelled(self)
@@ -91,7 +94,7 @@ impl TrCancellationToken for CancelledToken {
     }
 
     #[inline]
-    fn cancellation(&mut self) -> impl IntoFuture {
+    fn cancellation(&mut self) -> Self::Cancellation {
         CancelledToken::cancellation(self)
     }
 }
@@ -133,6 +136,8 @@ impl NonCancellableToken {
 }
 
 impl TrCancellationToken for NonCancellableToken {
+    type Cancellation = future::Pending<()>;
+
     #[inline]
     fn is_cancelled(&self) -> bool {
         NonCancellableToken::is_cancelled(self)
@@ -149,7 +154,7 @@ impl TrCancellationToken for NonCancellableToken {
     }
 
     #[inline]
-    fn cancellation(&mut self) -> impl IntoFuture {
+    fn cancellation(&mut self) -> Self::Cancellation {
         NonCancellableToken::cancellation(self)
     }
 }
