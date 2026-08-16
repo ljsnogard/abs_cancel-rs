@@ -1,4 +1,4 @@
-﻿use core::{
+use core::{
     future::{self, IntoFuture},
     ops::Try,
 };
@@ -15,18 +15,29 @@ where
 {
     type MayCancelOutput;
 
-    fn may_cancel_with<'f, C: TrCancellationToken>(
+    fn may_cancel_with<'f, C>(
         self,
         cancel: &'f mut C,
     ) -> impl IntoFuture<Output = Self::MayCancelOutput>
     where
-        Self: 'f;
+        Self: 'f,
+        // 当 `MayCancelOutput` 携带生命周期（即返回类型借用了 `Self` 的数据）时，
+        // 生成的 future 需要把 cancel token 的借用以 `&'a mut C` 的形式保存，
+        // 因此要求 cancel 借用存活期不短于 `'a`。没有这一条，宏生成的
+        // `may_cancel_with` 无法用 `&'f mut C` 构造出输出类型引用 `'a` 的 future。
+        'f: 'a,
+        C: TrCancellationToken + Clone;
 }
 
-/// A cancellation token can receive cancellation signal.
-pub trait TrCancellationToken {
-    type Cancellation: Future;
 
+/// A cancellation token can receive cancellation signal.
+///
+/// In actual usage, a `Clone` impl is usually needed. See `may_cancel_with`
+/// for the reason why.
+///
+/// So if you are developing an cancellation token, consider adding impl for
+/// `Clone`.
+pub trait TrCancellationToken {
     /// Tests whether this token has received cancellation signal or not.
     fn is_cancelled(&self) -> bool;
 
@@ -37,7 +48,7 @@ pub trait TrCancellationToken {
 
     /// Creates a future that will become ready when the cancellation signal is
     /// received by this token.
-    fn cancellation(&mut self) -> Self::Cancellation;
+    fn cancellation(&mut self) -> impl IntoFuture;
 }
 
 /// A token that is already cancelled and will never reset.
@@ -76,8 +87,6 @@ impl CancelledToken {
 }
 
 impl TrCancellationToken for CancelledToken {
-    type Cancellation = future::Ready<()>;
-
     #[inline]
     fn is_cancelled(&self) -> bool {
         CancelledToken::is_cancelled(self)
@@ -90,11 +99,11 @@ impl TrCancellationToken for CancelledToken {
 
     #[inline]
     fn try_spawn_child_token(&mut self) -> impl Try<Output: TrCancellationToken> {
-        Option::Some(self.clone())
+        Option::Some(*self)
     }
 
     #[inline]
-    fn cancellation(&mut self) -> Self::Cancellation {
+    fn cancellation(&mut self) -> impl IntoFuture {
         CancelledToken::cancellation(self)
     }
 }
@@ -136,8 +145,6 @@ impl NonCancellableToken {
 }
 
 impl TrCancellationToken for NonCancellableToken {
-    type Cancellation = future::Pending<()>;
-
     #[inline]
     fn is_cancelled(&self) -> bool {
         NonCancellableToken::is_cancelled(self)
@@ -150,11 +157,11 @@ impl TrCancellationToken for NonCancellableToken {
 
     #[inline]
     fn try_spawn_child_token(&mut self) -> impl Try<Output: TrCancellationToken> {
-        Option::Some(self.clone())
+        Option::Some(*self)
     }
 
     #[inline]
-    fn cancellation(&mut self) -> Self::Cancellation {
+    fn cancellation(&mut self) -> impl IntoFuture {
         NonCancellableToken::cancellation(self)
     }
 }
