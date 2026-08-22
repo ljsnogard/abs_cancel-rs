@@ -13,12 +13,20 @@ pub trait TrMayCancel<'a>
 where
     Self: 'a + IntoFuture,
 {
+    type MayCancelFuture<'f, C>: IntoFuture<Output = Self::MayCancelOutput>
+    where
+        Self: 'f,
+        C: TrCancellationToken + Clone,
+        C: 'a,
+        C: 'f,
+        'f: 'a;
+
     type MayCancelOutput;
 
     fn may_cancel_with<'f, C>(
         self,
         cancel: &'f mut C,
-    ) -> impl IntoFuture<Output = Self::MayCancelOutput>
+    ) -> Self::MayCancelFuture<'f, C>
     where
         Self: 'f,
         // 当 `MayCancelOutput` 携带生命周期（即返回类型借用了 `Self` 的数据）时，
@@ -37,7 +45,12 @@ where
 ///
 /// So if you are developing an cancellation token, consider adding impl for
 /// `Clone`.
-pub trait TrCancellationToken {
+pub trait TrCancellationToken
+where
+    Self: Send + Sync,
+{
+    type Cancellation: Future;
+
     /// Tests whether this token has received cancellation signal or not.
     fn is_cancelled(&self) -> bool;
 
@@ -48,7 +61,7 @@ pub trait TrCancellationToken {
 
     /// Creates a future that will become ready when the cancellation signal is
     /// received by this token.
-    fn cancellation(&mut self) -> impl IntoFuture;
+    fn cancellation(&mut self) -> Self::Cancellation;
 }
 
 /// A token that is already cancelled and will never reset.
@@ -87,6 +100,8 @@ impl CancelledToken {
 }
 
 impl TrCancellationToken for CancelledToken {
+    type Cancellation = future::Ready<()>;
+
     #[inline]
     fn is_cancelled(&self) -> bool {
         CancelledToken::is_cancelled(self)
@@ -103,7 +118,7 @@ impl TrCancellationToken for CancelledToken {
     }
 
     #[inline]
-    fn cancellation(&mut self) -> impl IntoFuture {
+    fn cancellation(&mut self) -> Self::Cancellation {
         CancelledToken::cancellation(self)
     }
 }
@@ -145,6 +160,8 @@ impl NonCancellableToken {
 }
 
 impl TrCancellationToken for NonCancellableToken {
+    type Cancellation = future::Pending<()>;
+
     #[inline]
     fn is_cancelled(&self) -> bool {
         NonCancellableToken::is_cancelled(self)
@@ -161,7 +178,7 @@ impl TrCancellationToken for NonCancellableToken {
     }
 
     #[inline]
-    fn cancellation(&mut self) -> impl IntoFuture {
+    fn cancellation(&mut self) -> Self::Cancellation {
         NonCancellableToken::cancellation(self)
     }
 }
