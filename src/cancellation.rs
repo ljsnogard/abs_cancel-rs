@@ -11,7 +11,7 @@ use core::{
 /// may be removed.
 pub trait TrMayCancel<'a>
 where
-    Self: 'a + IntoFuture,
+    Self: 'a + IntoFuture<Output = Self::MayCancelOutput>,
 {
     type MayCancelFuture<'f, C>: IntoFuture<Output = Self::MayCancelOutput>
     where
