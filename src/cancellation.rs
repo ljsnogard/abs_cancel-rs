@@ -32,7 +32,7 @@ where
 /// cloning a cancellation token should be cheap.
 pub trait TrCancellationToken
 where
-    Self: Send + Sync + Clone,
+    Self: Send + Sync,
 {
     type Cancellation: Future;
     type ChildToken: TrCancellationToken + Sized;
@@ -192,7 +192,7 @@ where
     where
         'lt_fut__: 'a,
         Self: 'lt_fut__,
-        TyTok__: 'lt_fut__ + TrCancellationToken + Clone;
+        TyTok__: 'lt_fut__ + TrCancellationToken;
 
     type MayCancelOutput = T;
 
@@ -201,7 +201,7 @@ where
         _tok: C,
     ) -> Self::MayCancelFuture<'a, C>
     where
-        C: 'a + TrCancellationToken + Clone
+        C: 'a + TrCancellationToken,
     {
         self
     }
