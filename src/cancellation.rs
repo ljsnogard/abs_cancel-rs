@@ -8,19 +8,22 @@ use core::future::{self, IntoFuture};
 /// may be removed.
 pub trait TrMayCancel<'a>
 where
-    Self: 'a + IntoFuture,
+    Self: 'a + IntoFuture<Output = Self::MayCancelOutput>
 {
-    type MayCancelFuture<'f, C>: IntoFuture<Output = Self::Output>
+    type MayCancelFuture<'f, C>: IntoFuture<Output = Self::MayCancelOutput>
     where
+        'f: 'a,
         Self: 'f,
-        C: TrCancellationToken;
+        C: 'f + TrCancellationToken;
+
+    type MayCancelOutput;
 
     fn may_cancel_with<C>(
         self,
         cancel: C,
     ) -> Self::MayCancelFuture<'a, C>
     where
-        C: TrCancellationToken;
+        C: 'a + TrCancellationToken;
 }
 
 
@@ -185,17 +188,20 @@ impl<'a, T> TrMayCancel<'a> for core::future::Ready<T>
 where
     T: 'a,
 {
-    type MayCancelFuture<'f, C> = core::future::Ready<T>
+    type MayCancelFuture<'lt_fut__, TyTok__> = core::future::Ready<T>
     where
-        Self: 'f,
-        C: TrCancellationToken + Clone;
+        'lt_fut__: 'a,
+        Self: 'lt_fut__,
+        TyTok__: 'lt_fut__ + TrCancellationToken + Clone;
+
+    type MayCancelOutput = T;
 
     fn may_cancel_with<C>(
         self,
         _tok: C,
     ) -> Self::MayCancelFuture<'a, C>
     where
-        C: TrCancellationToken + Clone
+        C: 'a + TrCancellationToken + Clone
     {
         self
     }
