@@ -1,7 +1,4 @@
-use core::{
-    future::{self, IntoFuture},
-    ops::Try,
-};
+use core::future::{self, IntoFuture};
 
 /// An instance of [IntoFuture] for an async task that may or may not be
 /// cancelled by an optional cancellation token.
@@ -11,44 +8,31 @@ use core::{
 /// may be removed.
 pub trait TrMayCancel<'a>
 where
-    Self: 'a + IntoFuture<Output = Self::MayCancelOutput>,
+    Self: 'a + IntoFuture,
 {
-    type MayCancelFuture<'f, C>: IntoFuture<Output = Self::MayCancelOutput>
+    type MayCancelFuture<'f, C>: IntoFuture<Output = Self::Output>
     where
         Self: 'f,
-        'f: 'a,
-        C: 'f,
-        C: TrCancellationToken + Clone;
+        C: TrCancellationToken;
 
-    type MayCancelOutput;
-
-    fn may_cancel_with<'f, C>(
+    fn may_cancel_with<C>(
         self,
-        cancel: &'f mut C,
-    ) -> Self::MayCancelFuture<'f, C>
+        cancel: C,
+    ) -> Self::MayCancelFuture<'a, C>
     where
-        Self: 'f,
-        // 当 `MayCancelOutput` 携带生命周期（即返回类型借用了 `Self` 的数据）时，
-        // 生成的 future 需要把 cancel token 的借用以 `&'a mut C` 的形式保存，
-        // 因此要求 cancel 借用存活期不短于 `'a`。没有这一条，宏生成的
-        // `may_cancel_with` 无法用 `&'f mut C` 构造出输出类型引用 `'a` 的 future。
-        'f: 'a,
-        C: TrCancellationToken + Clone;
+        C: TrCancellationToken;
 }
 
 
-/// A cancellation token can receive cancellation signal.
-///
-/// In actual usage, a `Clone` impl is usually needed. See `may_cancel_with`
-/// for the reason why.
-///
-/// So if you are developing an cancellation token, consider adding impl for
-/// `Clone`.
+/// A cancellation token can receive cancellation signal. Cloning the token
+/// will also clone the receiver of the cancellation signal, and the cost of
+/// cloning a cancellation token should be cheap.
 pub trait TrCancellationToken
 where
-    Self: Send + Sync,
+    Self: Send + Sync + Clone,
 {
     type Cancellation: Future;
+    type ChildToken: TrCancellationToken + Sized;
 
     /// Tests whether this token has received cancellation signal or not.
     fn is_cancelled(&self) -> bool;
@@ -56,15 +40,19 @@ where
     /// Tests whether this token will receive cancellation signal or not.
     fn can_be_cancelled(&self) -> bool;
 
-    fn try_spawn_child_token(&mut self) -> impl Try<Output: TrCancellationToken>;
+    fn child_token(&self) -> Self::ChildToken;
 
     /// Creates a future that will become ready when the cancellation signal is
     /// received by this token.
-    fn cancellation(&mut self) -> Self::Cancellation;
+    fn cancellation(self) -> Self::Cancellation;
 }
 
+//-- ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ----
+// CancelledToken
+//-- ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ----
+
 /// A token that is already cancelled and will never reset.
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct CancelledToken;
 
 impl CancelledToken {
@@ -100,6 +88,7 @@ impl CancelledToken {
 
 impl TrCancellationToken for CancelledToken {
     type Cancellation = future::Ready<()>;
+    type ChildToken = CancelledToken;
 
     #[inline]
     fn is_cancelled(&self) -> bool {
@@ -112,19 +101,24 @@ impl TrCancellationToken for CancelledToken {
     }
 
     #[inline]
-    fn try_spawn_child_token(&mut self) -> impl Try<Output: TrCancellationToken> {
-        Option::Some(*self)
+    fn child_token(&self) -> Self::ChildToken {
+        CancelledToken::child_token(self)
     }
 
     #[inline]
-    fn cancellation(&mut self) -> Self::Cancellation {
-        CancelledToken::cancellation(self)
+    fn cancellation(mut self) -> Self::Cancellation {
+        CancelledToken::cancellation(&mut self)
     }
 }
 
+
+//-- ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ----
+// NonCancellableToken
+//-- ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ----
+
 /// A cancellation token that will never be cancelled, usually used
 /// as a dummy for `TrCancellationToken`.
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct NonCancellableToken;
 
 impl NonCancellableToken {
@@ -160,6 +154,7 @@ impl NonCancellableToken {
 
 impl TrCancellationToken for NonCancellableToken {
     type Cancellation = future::Pending<()>;
+    type ChildToken = NonCancellableToken;
 
     #[inline]
     fn is_cancelled(&self) -> bool {
@@ -172,44 +167,40 @@ impl TrCancellationToken for NonCancellableToken {
     }
 
     #[inline]
-    fn try_spawn_child_token(&mut self) -> impl Try<Output: TrCancellationToken> {
-        Option::Some(*self)
+    fn child_token(&self) -> Self::ChildToken {
+        NonCancellableToken::child_token(self)
     }
 
     #[inline]
-    fn cancellation(&mut self) -> Self::Cancellation {
-        NonCancellableToken::cancellation(self)
+    fn cancellation(mut self) -> Self::Cancellation {
+        NonCancellableToken::cancellation(&mut self)
     }
 }
+
+//-- ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ----
+// impl TrMayCancel for core::future::Ready
+//-- ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ----
 
 impl<'a, T> TrMayCancel<'a> for core::future::Ready<T>
 where
     T: 'a,
 {
-    type MayCancelOutput = T;
     type MayCancelFuture<'f, C> = core::future::Ready<T>
     where
         Self: 'f,
-        'f: 'a,
-        C: 'f,
         C: TrCancellationToken + Clone;
 
-    fn may_cancel_with<'f, C>(
+    fn may_cancel_with<C>(
         self,
-        _tok: &'f mut C,
-    ) -> Self::MayCancelFuture<'f, C>
+        _tok: C,
+    ) -> Self::MayCancelFuture<'a, C>
     where
-        Self: 'f,
-        // 当 `MayCancelOutput` 携带生命周期（即返回类型借用了 `Self` 的数据）时，
-        // 生成的 future 需要把 cancel token 的借用以 `&'a mut C` 的形式保存，
-        // 因此要求 cancel 借用存活期不短于 `'a`。没有这一条，宏生成的
-        // `may_cancel_with` 无法用 `&'f mut C` 构造出输出类型引用 `'a` 的 future。
-        'f: 'a,
         C: TrCancellationToken + Clone
     {
         self
     }
 }
+
 
 #[cfg(test)]
 mod tests_ {
